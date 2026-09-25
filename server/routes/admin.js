@@ -349,6 +349,9 @@ router.get('/withdrawals', authAdmin, async (req, res) => {
       networkFeePaid: w.networkFeePaid,
       createdAt: w.createdAt,
       updatedAt: w.updatedAt,
+      balanceSource: w.balanceSource || (w.lockedBalanceSource ? 'locked' : 'available'),
+      reservedAmount: Number(w.reservedAmount || w.amount || 0),
+      debitedFromAvailable: Boolean(w.debitedFromAvailable),
       lockedBalanceAccount: Boolean(w.lockedBalanceSource),
       lockedBalanceAmount: w.lockedBalanceSource ? Number(w.amount || 0) : 0,
       paused: Boolean(w.paused)
@@ -873,16 +876,18 @@ router.patch('/withdrawals/:id', authAdmin, async (req, res) => {
       });
     }
 
-    // Legacy completion/rejection handling for backward compatibility
+    // Reserved withdrawals already removed funds from their selected bucket.
+    // Approval finalizes the request; rejection returns the reservation once.
     if (status === 'completed' && withdrawal.status === 'pending') {
-      if (withdrawal.type === 'roi') {
+      const isReservedWithdrawal = Number(withdrawal.reservedAmount || 0) > 0 && withdrawal.balanceSource;
+      if (!isReservedWithdrawal && withdrawal.type === 'roi') {
         if (user.lockedBalance >= withdrawal.amount) {
           user.lockedBalance -= withdrawal.amount;
           user.availableBalance = (user.availableBalance || 0) + withdrawal.amount;
         } else {
           return res.status(400).json({ message: 'Insufficient locked balance' });
         }
-      } else {
+      } else if (!isReservedWithdrawal) {
         if (destination === 'available') {
           user.depositBalance += withdrawal.amount;
         } else if (destination === 'locked') {
@@ -911,6 +916,31 @@ router.patch('/withdrawals/:id', authAdmin, async (req, res) => {
           availableBalance: user.availableBalance,
           depositBalance: user.depositBalance
         }
+      });
+    }
+
+    if (status === 'rejected' && withdrawal.status === 'pending') {
+      const reservedAmount = Number(withdrawal.reservedAmount || 0);
+      const source = withdrawal.balanceSource || (withdrawal.debitedFromAvailable ? 'available' : null);
+      if (reservedAmount > 0 && source === 'available' && withdrawal.debitedFromAvailable) {
+        user.availableBalance = Number((user.availableBalance || 0) + reservedAmount);
+      } else if (reservedAmount > 0 && source === 'locked') {
+        user.lockedBalance = Number((user.lockedBalance || 0) + reservedAmount);
+      }
+
+      withdrawal.status = 'rejected';
+      withdrawal.adminNotes = req.body.adminNotes || withdrawal.adminNotes;
+      withdrawal.processedAt = new Date();
+      withdrawal.processedBy = req.user.id;
+      await user.save();
+      await withdrawal.save();
+      await logAudit('reject_withdrawal', { restoredAmount: reservedAmount, restoredSource: source });
+
+      return res.json({
+        success: true,
+        message: 'Withdrawal rejected and the reserved funds were returned.',
+        withdrawal: { _id: withdrawal._id, amount: withdrawal.amount, status: withdrawal.status, type: withdrawal.type },
+        userBalances: { availableBalance: user.availableBalance, lockedBalance: user.lockedBalance }
       });
     }
 
