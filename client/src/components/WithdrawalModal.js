@@ -1,0 +1,118 @@
+﻿// src/components/WithdrawalModal.js
+import React, { useState } from 'react';
+import axios from 'axios';
+import { toast } from 'react-toastify';
+
+const WithdrawalModal = ({ isOpen, onClose, investments }) => {
+  const [formData, setFormData] = useState({
+    investmentId: '',
+    amount: '',
+    method: 'bank_transfer'
+  });
+  const [loading, setLoading] = useState(false);
+
+  const handleChange = (e) => {
+    setFormData({
+      ...formData,
+      [e.target.name]: e.target.value
+    });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setLoading(true);
+    
+    try {
+      const response = await axios.post('/api/user/withdraw', formData);
+      
+      toast.success(response.data.message);
+      onClose();
+      window.dispatchEvent(new Event('dashboardUpdate'));
+    } catch (err) {
+      toast.error(err.response?.data?.message || 'Withdrawal failed');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center z-50 theme-overlay">
+      <div className="glassmorphic p-6 rounded-xl w-full max-w-full sm:max-w-md mx-4 theme-aware-bg-secondary border theme-aware-border-secondary">
+        <h2 className="text-2xl font-bold mb-4 text-gold">Simulated Withdrawal</h2>
+        
+        <form onSubmit={handleSubmit}>
+          <div className="mb-4">
+            <label className="block theme-aware-text-secondary mb-2">Investment</label>
+            <select
+              name="investmentId"
+              value={formData.investmentId}
+              onChange={handleChange}
+              className="w-full theme-aware-bg-primary border theme-aware-border-secondary theme-aware-text rounded-lg p-2"
+              required
+            >
+              <option value="">Select Investment</option>
+              {investments.map((inv) => (
+                <option key={inv._id} value={inv._id}>
+                  {inv.fundType} - ${inv.currentValue.toFixed(2)}
+                </option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="mb-4">
+            <label className="block theme-aware-text-secondary mb-2">Amount (USD)</label>
+            <input
+              type="number"
+              name="amount"
+              value={formData.amount}
+              onChange={handleChange}
+              min="100"
+              step="100"
+              className="w-full theme-aware-bg-primary border theme-aware-border-secondary theme-aware-text rounded-lg p-2"
+              required
+            />
+          </div>
+          
+          <div className="mb-6">
+            <label className="block theme-aware-text-secondary mb-2">Method</label>
+            <select
+              name="method"
+              value={formData.method}
+              onChange={handleChange}
+              className="w-full theme-aware-bg-primary border theme-aware-border-secondary theme-aware-text rounded-lg p-2"
+              required
+            >
+              <option value="bank_transfer">Bank Transfer</option>
+              <option value="crypto">Crypto Transfer</option>
+              <option value="wire">Wire Transfer</option>
+            </select>
+          </div>
+          
+          <div className="flex flex-col sm:flex-row gap-3 sm:space-x-3 justify-end">
+            <button
+              type="button"
+              onClick={onClose}
+              className="w-full sm:w-auto px-4 py-2 border theme-aware-border-secondary rounded-lg hover:theme-aware-bg-tertiary transition"
+              disabled={loading}
+            >
+              Cancel
+            </button>
+            <button
+              type="submit"
+              className="w-full sm:w-auto px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition flex items-center justify-center"
+              disabled={loading}
+            >
+              {loading && <div className="animate-spin rounded-full h-4 w-4 mr-2 border-t-2 border-b-2 border-white"></div>}
+              Request Withdrawal
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+};
+
+export default WithdrawalModal;
+

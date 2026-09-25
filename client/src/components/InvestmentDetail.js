@@ -1,0 +1,487 @@
+﻿// src/components/InvestmentDetail.js
+import React, { useEffect, useState } from 'react';
+import { toast } from 'react-toastify';
+import { useNavigate } from 'react-router-dom';
+import { FiX, FiDollarSign, FiPieChart, FiTrendingUp, FiClock } from 'react-icons/fi';
+import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import axios from '../utils/axios';
+
+/*
+  Theme refactor notes (InvestmentDetail):
+  - Neutral Tailwind classes (text-gray-*, text-white, text-black, bg-gray-*, bg-black/white) were replaced with
+    theme-aware utility classes (.theme-aware-*) which use CSS variables defined at :root and :root.dark.
+  - Overlays now use the document root overlay variable (--overlay-bg) so they inherit the global theme.
+  - Expected ROI display was removed as requested.
+*/
+
+const BUILD_MARKER = 'axios-switch-20260213';
+console.log('[CLIENT BUILD] InvestmentDetail marker:', BUILD_MARKER);
+
+const InvestmentDetail = ({ investment, onClose }) => {
+    // Admin gain/loss adjustment UI state
+    const [adjustAmount, setAdjustAmount] = useState('');
+    const [adjustType, setAdjustType] = useState('gain');
+    const [adjustLoading, setAdjustLoading] = useState(false);
+
+    // Handler for admin gain/loss adjustment
+    const handleAdjustInvestment = async () => {
+      if (!investment || investment.status !== 'active') return;
+      setAdjustLoading(true);
+      try {
+        // use configured axios (ensures correct baseURL and auth headers)
+        const axios = require('../utils/axios').default;
+        const url = `/api/admin/investment/${investment._id || investment.id}/set-gain-loss`;
+        const body = { amount: Number(adjustAmount), type: adjustType };
+
+        console.log('[INVEST_DETAIL] About to send request (axios):', { url, body });
+
+        const resp = await axios.post(url, body);
+        console.log('[INVEST_DETAIL] Axios response:', resp.status, resp.data);
+
+        const data = resp.data;
+        if (!data) {
+          throw new Error('Empty response from server');
+        }
+
+        if (data.success) {
+          toast.success(`Investment ${adjustType} added successfully.`);
+          // Build a new transaction and append locally so UI updates immediately
+          const newTx = {
+            type: adjustType,
+            amount: Number(adjustAmount),
+            date: new Date().toISOString(),
+            description: `Admin ${adjustType} adjustment`
+          };
+          setAdjustAmount('');
+          // Update local investment with the new currentValue and transactions
+          if (data.investment) {
+            setLiveInvestment(prev => ({
+              ...prev,
+              currentValue: data.investment.currentValue,
+              transactions: [newTx, ...(prev.transactions || [])]
+            }));
+          } else {
+            // Fallback: at least update transactions locally
+            setLiveInvestment(prev => ({
+              ...prev,
+              transactions: [newTx, ...(prev.transactions || [])]
+            }));
+          }
+        } else {
+          toast.error(data.message || 'Failed to adjust investment');
+        }
+      } catch (err) {
+        console.error('[INVEST_DETAIL] Error caught:', err);
+        toast.error('Failed to adjust investment: ' + (err.message || 'Network Error'));
+
+      } finally {
+        setAdjustLoading(false);
+      }
+    };
+  const navigate = useNavigate();
+  const [timeLeft, setTimeLeft] = useState('');
+  const [tab, setTab] = useState('gains');
+  const [liveInvestment, setLiveInvestment] = useState(investment);
+
+  // Generate performance data for this investment
+  const performanceData = Array.from({ length: 12 }, (_, i) => {
+    const month = new Date(investment.startDate);
+    month.setMonth(month.getMonth() + i);
+    
+    if (month > new Date()) return null;
+    
+    const monthName = month.toLocaleString('default', { month: 'short' });
+    const growthRate = 0.01 + (Math.random() * 0.02); // 1-3% monthly growth
+    const value = investment.initialAmount * Math.pow(1 + growthRate, i + 1);
+    
+    return {
+      name: monthName,
+      value: parseFloat(value.toFixed(2)),
+      roi: parseFloat(((value - investment.initialAmount) / investment.initialAmount * 100).toFixed(2))
+    };
+  }).filter(Boolean);
+
+  // Helper to get plan config by name
+  const PLAN_CONFIG = {
+    Silver: { roi: 350, duration: 7 },
+    Gold: { roi: 450, duration: 10 },
+    Platinum: { roi: 550, duration: 15 },
+    Diamond: { roi: 650, duration: 21 },
+  };
+
+  // Calculate correct current ROI and value for active investments
+  function getCurrentRoiAndValue(investment) {
+    if (!investment) return { roi: '0.00', value: '0.00' };
+    const initial = Number(investment.initialAmount || 0);
+    const current = Number(investment.currentValue ?? investment.currentAmount ?? 0);
+    if (initial > 0 && !isNaN(current)) {
+      const roi = ((current - initial) / initial) * 100;
+      return {
+        roi: isFinite(roi) ? roi.toFixed(2) : '0.00',
+        value: isFinite(current) ? current.toFixed(2) : '0.00',
+      };
+    }
+    const fallbackRoi = Number(investment.roi || 0);
+    return {
+      roi: isFinite(fallbackRoi) ? fallbackRoi.toFixed(2) : '0.00',
+      value: isFinite(current) ? current.toFixed(2) : '0.00',
+    };
+  }
+
+  // Calculate correct current value and ROI for active investments
+  const { roi: displayRoi, value: displayCurrentValue } = getCurrentRoiAndValue(liveInvestment);
+
+  useEffect(() => {
+    function updateCountdown() {
+      const end = new Date(investment.endDate);
+      const now = new Date();
+      if (isNaN(end.getTime())) {
+        setTimeLeft('N/A');
+        return;
+      }
+      let diff = end - now;
+      if (diff <= 0) {
+        setTimeLeft('0d 0h 0m 0s');
+        return;
+      }
+      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+      diff -= days * 1000 * 60 * 60 * 24;
+      const hours = Math.floor(diff / (1000 * 60 * 60));
+      diff -= hours * 1000 * 60 * 60;
+      const minutes = Math.floor(diff / (1000 * 60));
+      diff -= minutes * 1000 * 60;
+      const seconds = Math.floor(diff / 1000);
+      setTimeLeft(`${days}d ${hours}h ${minutes}m ${seconds}s`);
+    }
+
+    updateCountdown();
+    const interval = setInterval(updateCountdown, 1000);
+    return () => clearInterval(interval);
+  }, [investment.endDate]);
+
+    useEffect(() => {
+    setLiveInvestment(investment); // Reset on open
+
+    let mounted = true;
+    const fetchAndMerge = async () => {
+      try {
+        const res = await axios.get(`/api/portfolio/investment/${investment._id || investment.id}`);
+        const data = res?.data;
+        const fetched = (data && data.investment) ? data.investment : data;
+
+        // Normalize transactions if server returned lastTransactions only
+        if (fetched && !fetched.transactions && fetched.lastTransactions) {
+          fetched.transactions = fetched.lastTransactions;
+        }
+
+        if (!mounted) return;
+        // Merge transactions instead of blindly overwriting so local added txs don't disappear
+        setLiveInvestment(prev => {
+          if (!fetched) return prev;
+
+          const prevTx = (prev && (prev.transactions || prev.lastTransactions || prev.transactionsHistory || prev.tx || prev.statement?.transactions)) ? (prev.transactions || prev.lastTransactions || prev.transactionsHistory || prev.tx || prev.statement?.transactions) : [];
+          const fetchedTx = fetched.transactions || fetched.lastTransactions || fetched.transactionsHistory || [];
+
+          const map = new Map();
+          const addTx = (tx) => {
+            const key = tx._id ? String(tx._id) : `${tx.type}|${Number(tx.amount ?? tx.value ?? 0)}|${tx.date || tx.createdAt || tx.timestamp}|${tx.description || tx.note || ''}`;
+            if (!map.has(key)) {
+              map.set(key, { ...tx, amount: Number(tx.amount ?? tx.value ?? 0) });
+            }
+          };
+
+          prevTx.forEach(addTx);
+          fetchedTx.forEach(addTx);
+
+          const mergedTxs = Array.from(map.values()).sort((a,b) => new Date(b.date || b.createdAt || 0) - new Date(a.date || a.createdAt || 0));
+
+          // Merge fetched fields with prev: prefer fetched when present, otherwise keep previous values
+          const merged = { ...fetched };
+          if (prev) {
+            Object.keys(prev).forEach(k => {
+              if (merged[k] === undefined || merged[k] === null || merged[k] === '') {
+                merged[k] = prev[k];
+              }
+            });
+          }
+          merged.transactions = mergedTxs;
+          return merged;
+        });
+      } catch (err) {
+        console.error('[INVEST_DETAIL] fetchAndMerge error', err);
+      }
+    };
+
+    fetchAndMerge();
+    const id = setInterval(fetchAndMerge, 15000);
+    return () => { mounted = false; clearInterval(id); };
+  }, [investment]);
+
+  // Use liveInvestment.transactions or fallback to other possible transaction sources
+  const txList = (liveInvestment && (
+    liveInvestment.transactions ||
+    liveInvestment.lastTransactions ||
+    liveInvestment.lastTransactionsByType ||
+    liveInvestment.transactionsHistory ||
+    liveInvestment.tx ||
+    (liveInvestment.statement && liveInvestment.statement.transactions)
+  )) || [];
+  const normalizedTxs = txList.map(t => {
+    // Normalize amount: accept numbers or strings like "$165.00", "165.00", "-165.00"
+    let raw = (t && (t.amount ?? t.value ?? t.amt)) || 0;
+    let amt = 0;
+    if (typeof raw === 'number') amt = raw;
+    else if (typeof raw === 'string') {
+      // strip non-numeric except dot and minus
+      const cleaned = raw.replace(/[^0-9.-]+/g, '');
+      amt = parseFloat(cleaned);
+      if (Number.isNaN(amt)) amt = 0;
+    } else {
+      amt = Number(raw) || 0;
+    }
+
+    // Normalize date field
+    const date = t.date || t.createdAt || t.timestamp || null;
+
+    // Normalize type and derive effective type when missing
+    const rawType = (t.type || t.txType || t.category || '').toString().toLowerCase();
+    let effectiveType = rawType;
+    if (!effectiveType) {
+      if (amt > 0) effectiveType = 'gain';
+      else if (amt < 0) effectiveType = 'loss';
+      else effectiveType = 'other';
+    }
+
+    return {
+      original: t,
+      _id: t._id || t.id || null,
+      type: rawType || effectiveType,
+      effectiveType,
+      amount: Number(amt),
+      date,
+      description: t.description || t.note || t.meta || ''
+    };
+  });
+
+  // Classify gains and losses by sign to be robust to varying type names
+  const gainTxs = normalizedTxs.filter(t => Number(t.amount) > 0);
+  const lossTxs = normalizedTxs.filter(t => Number(t.amount) < 0);
+
+  const handleWithdrawRoi = async () => {
+    if (!investment || investment.status !== 'completed') {
+      toast.error('You can only start an ROI withdrawal from a completed investment.');
+      return;
+    }
+
+    if (investment.roiWithdrawn) {
+      toast.info('ROI has already been withdrawn for this investment.');
+      return;
+    }
+
+    try {
+      const response = await axios.post(`/api/investment/withdraw-roi/${investment._id || investment.id}`);
+      if (response?.data?.success) {
+        toast.success('ROI withdrawal request created. Continue in the withdrawal center to complete the staged flow.');
+        onClose?.();
+        navigate('/dashboard/withdraw', { replace: true });
+        return;
+      }
+
+      toast.error(response?.data?.error || response?.data?.message || 'Failed to start the ROI withdrawal flow.');
+    } catch (error) {
+      const message = error?.response?.data?.error || error?.response?.data?.message || error?.message || 'Unable to start the ROI withdrawal flow.';
+      toast.error(message);
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 flex items-center justify-center z-50 p-4" style={{ backgroundColor: 'var(--overlay-bg)' }}>
+      <div className="glassmorphic rounded-xl w-full max-w-2xl max-h-[90vh] overflow-y-auto scrollbar-thin scrollbar-thumb-gold">
+        <div className="p-6">
+                    {/* Admin gain/loss adjustment UI for active investments */}
+                    {liveInvestment.status === 'active' && localStorage.getItem('adminToken') && (
+                      <div className="mb-6 flex items-center gap-2">
+                        <input
+                          type="number"
+                          min="0"
+                          value={adjustAmount}
+                          onChange={e => setAdjustAmount(e.target.value)}
+                          placeholder="Amount"
+                          className="px-2 py-1 rounded border theme-aware-border-secondary theme-aware-text"
+                          disabled={adjustLoading}
+                        />
+                        <select
+                          value={adjustType}
+                          onChange={e => setAdjustType(e.target.value)}
+                          className="px-2 py-1 rounded border theme-aware-border-secondary theme-aware-text"
+                          disabled={adjustLoading}
+                        >
+                          <option value="gain">Gain</option>
+                          <option value="loss">Loss</option>
+                        </select>
+                        <button
+                                                  className="bg-blue-600 hover:bg-blue-700 theme-aware-text px-3 py-1 rounded font-bold"
+                          onClick={handleAdjustInvestment}
+                          disabled={adjustLoading || !adjustAmount}
+                        >
+                          Add Gain/Loss
+                        </button>
+                      </div>
+                    )}
+          <div className="flex justify-between items-start mb-6">
+            <h2 className="text-2xl font-bold">{liveInvestment.fundName}</h2>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-full theme-aware-hover-bg transition"
+            >
+              <FiX size={24} />
+            </button>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+            <div className="p-4 rounded-lg theme-aware-bg-tertiary">
+              <h3 className="text-lg font-bold mb-2 flex items-center">
+                <FiDollarSign className="mr-2 text-gold" /> Invested Amount
+              </h3>
+              <p className="text-2xl">${Number(liveInvestment?.initialAmount ?? investment?.initialAmount ?? 0).toLocaleString(undefined, {maximumFractionDigits: 2})}</p>
+            </div>
+            
+            <div className="p-4 rounded-lg theme-aware-bg-tertiary">
+              <h3 className="text-lg font-bold mb-2 flex items-center">
+                <FiTrendingUp className="mr-2 text-gold" /> Current Value
+              </h3>
+              <p className="text-2xl">${Number(displayCurrentValue).toLocaleString(undefined, {maximumFractionDigits: 2})}</p>
+            </div>
+            
+            <div className="p-4 rounded-lg theme-aware-bg-tertiary">
+              <h3 className="text-lg font-bold mb-2 flex items-center">
+                <FiPieChart className="mr-2 text-gold" /> ROI
+              </h3>
+              <p className={`text-2xl ${
+                displayRoi >= 0 ? 'text-green-500' : 'text-red-500'
+              }`}>
+                {displayRoi}%
+              </p>
+            </div>
+            
+            <div className="p-4 rounded-lg theme-aware-bg-tertiary">
+              <h3 className="text-lg font-bold mb-2 flex items-center">
+                <FiClock className="mr-2 text-gold" /> Time Remaining
+              </h3>
+              <p className="text-2xl">{timeLeft}</p>
+            </div>
+          </div>
+          
+          <div className="mb-8">
+            <h3 className="text-xl font-bold mb-4">Performance</h3>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={performanceData}>
+                  <XAxis dataKey="name" stroke="var(--text-tertiary)" />
+                  <YAxis stroke="var(--text-tertiary)" />
+                  <Tooltip 
+                    contentClassName="chart-tooltip"
+                    formatter={(value) => [`$${value.toLocaleString()}`, 'Value']}
+                    labelStyle={{ color: 'inherit' }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="value"
+                    stroke="#D4AF37"
+                    strokeWidth={2}
+                    dot={{ fill: '#D4AF37', strokeWidth: 2, r: 4 }}
+                    activeDot={{ r: 6 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          </div>
+          
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            <div>
+              <h3 className="text-lg font-bold mb-3">Investment Details</h3>
+              <div className="space-y-3">
+                <div className="flex justify-between">
+                  <span className="theme-aware-text-muted">Plan</span>
+                  <span>{liveInvestment.planName}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="theme-aware-text-muted">Start Date</span>
+                  <span>{new Date(liveInvestment.startDate).toLocaleDateString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="theme-aware-text-muted">End Date</span>
+                  <span>{new Date(liveInvestment.endDate).toLocaleDateString()}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="theme-aware-text-muted">Status</span>
+                  <span className={`${(liveInvestment?.status === 'active') ? 'text-green-500' : 'theme-aware-text-muted'}`}>
+                    {(liveInvestment?.status ? (liveInvestment.status.charAt(0).toUpperCase() + liveInvestment.status.slice(1)) : 'N/A')}
+                  </span>
+                </div>
+              </div>
+            </div>
+            
+            {/* Fund Strategy and prospectus button removed as requested */}
+          </div>
+          
+          <div className="mb-8">
+            <div className="flex space-x-4 mb-2">
+                        <button className={`px-4 py-2 rounded-lg font-bold ${tab === 'gains' ? 'bg-green-700 theme-aware-text' : 'theme-aware-bg-tertiary theme-aware-text-muted'}`} onClick={() => setTab('gains')}>Gains</button>
+                        <button className={`px-4 py-2 rounded-lg font-bold ${tab === 'losses' ? 'bg-red-700 theme-aware-text' : 'theme-aware-bg-tertiary theme-aware-text-muted'}`} onClick={() => setTab('losses')}>Losses</button>
+            </div>
+            <div className="overflow-y-auto max-h-40">
+                        {tab === 'gains' && gainTxs.length === 0 && <div className="theme-aware-text-muted">No gains yet.</div>}
+                        {tab === 'losses' && lossTxs.length === 0 && <div className="theme-aware-text-muted">No losses yet.</div>}
+              {tab === 'gains' && gainTxs.map((tx) => {
+                const key = tx._id || `${tx.type}-${tx.amount}-${tx.date}`;
+                const dateObj = new Date(tx.date || tx.createdAt || Date.now());
+                const dateStr = isNaN(dateObj.getTime()) ? 'N/A' : dateObj.toLocaleDateString();
+                const amount = Number(tx.amount) || 0;
+                return (
+                  <div key={key} className="flex justify-between py-1 text-green-400">
+                    <span>{dateStr}</span>
+                    <span>+${amount.toFixed(2)}</span>
+                  </div>
+                );
+              })}
+              {tab === 'losses' && lossTxs.map((tx) => {
+                const key = tx._id || `${tx.type}-${tx.amount}-${tx.date}`;
+                const dateObj = new Date(tx.date || tx.createdAt || Date.now());
+                const dateStr = isNaN(dateObj.getTime()) ? 'N/A' : dateObj.toLocaleDateString();
+                const amount = Number(tx.amount) || 0;
+                return (
+                  <div key={key} className="flex justify-between py-1 text-red-400">
+                    <span>{dateStr}</span>
+                    <span>-${Math.abs(amount).toFixed(2)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+        
+        <div className="p-4 rounded-b-xl theme-aware-bg-tertiary">
+          <div className="flex justify-end space-x-3">
+            <button
+              className="px-6 py-2 border theme-aware-border-secondary rounded-lg theme-aware-hover-bg transition"
+              onClick={() => window.open('/statements', '_blank')}
+            >
+              Statements
+            </button>
+            <button
+              className="px-6 py-2 bg-gold theme-aware-text rounded-lg hover:bg-yellow-600 transition"
+              onClick={handleWithdrawRoi}
+              disabled={investment.roiWithdrawn}
+            >
+              {investment.roiWithdrawn ? 'ROI Withdrawn' : 'Withdraw'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default InvestmentDetail
+

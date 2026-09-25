@@ -1,0 +1,260 @@
+// (Removed: will be placed at the end)
+require('dotenv').config({ path: __dirname + '/.env' });
+console.log('==============================');
+console.log('LuxYield Backend Server Starting');
+console.log('[INFO] Environment:', process.env.NODE_ENV);
+console.log('==============================')
+const express = require('express');
+const mongoose = require('mongoose');
+const cors = require('cors');
+const http = require('http');
+const socketio = require('socket.io');
+const { startRoiCron } = require('./utils/roiCalculator');
+
+const app = express();
+// Trust proxy headers (needed for WebSocket support on Render and similar hosts)
+app.set('trust proxy', 1);
+// Log all /socket.io/ requests for debugging WebSocket handshake issues
+app.use('/socket.io', (req, res, next) => {
+  console.log(`[SOCKET.IO] ${req.method} ${req.originalUrl} at ${new Date().toISOString()}`);
+  next();
+});
+const server = http.createServer(app);
+
+// Unified CORS configuration
+// Allow localhost in development and the deployed frontend in production.
+const allowedOrigins = process.env.NODE_ENV === 'development'
+  ? ['http://localhost:3000', 'http://localhost:3001']
+  : ['https://www.luxyield.com'];
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error(`CORS origin not allowed: ${origin}`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+  allowedHeaders: ['Origin', 'X-Requested-With', 'Content-Type', 'Accept', 'Authorization'],
+  exposedHeaders: ['Authorization']
+};
+
+// Configure CORS before every route and terminate browser preflight requests here.
+app.use(cors(corsOptions));
+app.options('*', cors(corsOptions));
+
+// Log CORS configuration
+console.log('[DEBUG] CORS origins:', allowedOrigins);
+
+const io = socketio(server, { 
+  cors: { 
+    origin: allowedOrigins,
+    credentials: true,
+    methods: ['GET', 'POST']
+  } 
+});
+
+// Basic Socket.IO connection handler
+io.on('connection', (socket) => {
+  console.log('A client connected to WebSocket:', socket.id);
+  socket.on('disconnect', () => {
+    console.log('Client disconnected:', socket.id);
+  });
+});
+
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ limit: '10mb', extended: true }));
+
+// Global request logger for debugging
+app.use((req, res, next) => {
+  // Log ALL requests for admin endpoints
+  if (req.path.includes('/investment') || req.path.includes('/admin') || req.originalUrl.includes('set-gain-loss')) {
+    console.log('[GLOBAL] Incoming request:', {
+      method: req.method,
+      path: req.path,
+      originalUrl: req.originalUrl,
+      body: req.method === 'POST' ? req.body : 'N/A'
+    });
+  }
+  
+  // Intercept response to log what's being sent back and normalize id fields
+  const originalJson = res.json;
+  const originalEnd = res.end;
+  const originalSend = res.send;
+
+  // Helper: recursively walk objects/arrays and add `id` where `_id` exists but `id` is missing
+  function normalizeIds(obj) {
+    if (!obj || (typeof obj !== 'object')) return obj;
+    if (Array.isArray(obj)) {
+      for (let i = 0; i < obj.length; i++) obj[i] = normalizeIds(obj[i]);
+      return obj;
+    }
+    // For plain objects, add id if _id exists
+    if (obj._id && !obj.id) {
+      try { obj.id = String(obj._id); } catch (e) { obj.id = obj._id; }
+    }
+    // Recurse into properties
+    for (const k of Object.keys(obj)) {
+      try { obj[k] = normalizeIds(obj[k]); } catch (e) { /* ignore */ }
+    }
+    return obj;
+  }
+
+  res.json = function(data) {
+    try {
+      normalizeIds(data);
+    } catch (e) {
+      console.warn('[GLOBAL] normalizeIds failed', e?.message || e);
+    }
+
+    if (req.path.includes('/investment') || req.path.includes('/admin') || req.originalUrl.includes('set-gain-loss')) {
+      console.log('[GLOBAL RESPONSE JSON] Path:', req.path, 'Data:', JSON.stringify(data).substring(0, 500));
+    }
+    return originalJson.call(this, data);
+  };
+
+  res.end = function(data) {
+    if (req.path.includes('/investment') || req.path.includes('/admin') || req.originalUrl.includes('set-gain-loss')) {
+      console.log('[GLOBAL RESPONSE END] Path:', req.path, 'Data length:', data ? String(data).length : 0);
+    }
+    return originalEnd.call(this, data);
+  };
+
+  if (originalSend) {
+    res.send = function(data) {
+      try {
+        // If sending JSON-like string, attempt to normalize before sending
+        let parsed = null;
+        if (typeof data === 'string') {
+          try { parsed = JSON.parse(data); } catch { parsed = null; }
+        } else if (typeof data === 'object') parsed = data;
+        if (parsed) normalizeIds(parsed);
+      } catch (e) { /* ignore */ }
+
+      if (req.path.includes('/investment') || req.path.includes('/admin') || req.originalUrl.includes('set-gain-loss')) {
+        console.log('[GLOBAL RESPONSE SEND] Path:', req.path, 'Data:', JSON.stringify(data).substring(0, 500));
+      }
+      return originalSend.call(this, data);
+    };
+  }
+
+  next();
+});
+
+// Register /api/plans route after app is initialized and after all require statements
+app.use('/api/plans', require('./routes/plans'));
+// Admin config API (runtime editable settings)
+app.use('/api/admin/config', require('./routes/admin/config'));
+
+// Database connection
+mongoose.set('bufferTimeoutMS', 10000);
+mongoose.connect(process.env.MONGO_URI, {
+  serverSelectionTimeoutMS: 10000,
+  connectTimeoutMS: 10000,
+  socketTimeoutMS: 15000
+})
+  .then(() => {
+    console.log('MongoDB connected');
+    startRoiCron(); // Start ROI simulation cron after DB is connected
+  })
+  .catch(err => console.log(err));
+
+mongoose.connection.on('disconnected', () => {
+  console.error('[MONGO] Database connection disconnected');
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('[MONGO] Database connection error:', err.message);
+});
+
+// Routes
+const authRouter = require('./routes/auth');
+console.log('Mounting /api/auth routes...');
+app.use('/api/auth', authRouter);
+console.log('/api/auth routes mounted. All /api/auth/* requests will be logged by the router.');
+app.use('/api/users', require('./routes/users'));
+app.use('/api/funds', require('./routes/funds'));
+app.use('/api/blogs', require('./routes/blog'));
+app.use('/api/events', require('./routes/event'));
+app.use('/api/user', require('./routes/user'));
+app.use('/api/leaderboard', require('./routes/leaderboard'));
+app.use('/api/portfolio', require('./routes/portfolio'));
+app.use('/api/portfolio', require('./routes/portfolio_invest'));
+app.use('/api/deposit', require('./routes/deposit'));
+app.use('/api/goals', require('./routes/goals'));
+app.use('/api/wallets', require('./routes/wallets'));
+app.use('/api/admin', require('./routes/admin'));
+app.use('/api/admin/plans', require('./routes/admin/plans'));
+app.use('/api/admin/deposits', require('./routes/admin/deposits'));
+// Mount admin withdrawals so admin UI can fetch withdrawals
+app.use('/api/admin/withdrawals', require('./routes/admin/withdrawals'));
+// Mount admin ROI approvals (dedicated unlocking route)
+app.use('/api/admin/roi-approvals', require('./routes/admin/roi-approvals'));
+app.use('/api/market-updates', require('./routes/market-updates'));
+app.use('/api/admin/user-investments', require('./routes/admin/userInvestments'));
+app.use('/uploads', require('./routes/uploads'));
+app.use(require('./routes/sendTestEmail'));
+app.use('/api/test', require('./routes/test'));
+app.use('/uploads/announcements', express.static(__dirname + '/uploads/announcements'));
+app.use('/api', require('./routes/announcementUploads'));
+app.use('/api/performance', require('./routes/performance')); // Add performance metrics API route
+app.use('/api/news', require('./routes/news')); // Add news API route
+app.use('/api/investment', require('./routes/investment'));
+app.use('/api/ai-chat', require('./routes/aiChat'));
+app.use('/api/withdrawal', require('./routes/withdrawal'));
+
+// Socket.IO logic
+io.on('connection', (socket) => {
+  // Group chat logic
+  socket.on('joinGroup', ({ name }) => {
+    socket.join('groupchat');
+    socket.data.nickname = name;
+    // Optionally notify others someone joined
+    // io.to('groupchat').emit('groupMessage', { name: 'System', text: `${name} joined the chat`, time: new Date().toLocaleTimeString(), isAdmin: false });
+  });
+
+  socket.on('groupMessage', (msg) => {
+    // Broadcast to all in groupchat room
+    io.to('groupchat').emit('groupMessage', msg);
+  });
+});
+
+// Health check endpoint for DB and server status
+app.get('/api/health', async (req, res) => {
+  try {
+    // Check MongoDB connection
+    const dbState = mongoose.connection.readyState;
+    let dbStatus = 'disconnected';
+    if (dbState === 1) dbStatus = 'connected';
+    else if (dbState === 2) dbStatus = 'connecting';
+    else if (dbState === 3) dbStatus = 'disconnecting';
+    res.json({
+      status: 'ok',
+      dbStatus,
+      serverTime: new Date().toISOString()
+    });
+  } catch (err) {
+    res.status(500).json({ status: 'error', error: err.message });
+  }
+});
+
+// Root route for health check
+app.get('/', (req, res) => {
+  res.send('API is running');
+});
+
+// Global error handler: always return JSON
+app.use((err, req, res, next) => {
+  console.error('Global error:', err);
+  res.status(500).json({ success: false, message: 'Internal server error.' });
+});
+
+// Catch-all for unmatched routes: always return JSON
+app.use((req, res) => {
+  res.status(404).json({ success: false, message: 'Route not found.' });
+});
+
+server.listen(process.env.PORT || 5000, () => {
+  console.log('Server running on port', process.env.PORT || 5000);
+});

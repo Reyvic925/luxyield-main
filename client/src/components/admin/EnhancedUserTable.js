@@ -1,0 +1,398 @@
+﻿import React, { useState } from 'react';
+import { FiSearch, FiFilter, FiEdit2, FiEye, FiDownload, FiSliders, FiChevronDown, FiUser, FiDollarSign, FiTrendingUp } from 'react-icons/fi';
+import BalanceManagementModal from './BalanceManagementModal';
+import InvestmentGainLossModal from './InvestmentGainLossModal';
+
+const EnhancedUserTable = ({ users, onSelectUser, onUpdateUser }) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [filters, setFilters] = useState({
+    tier: 'all',
+    kycStatus: 'all',
+    activeOnly: false,
+  });
+  const [showFilters, setShowFilters] = useState(false);
+  const [sortBy, setSortBy] = useState('name');
+  const [sortOrder, setSortOrder] = useState('asc');
+  const [selectedUserForBalance, setSelectedUserForBalance] = useState(null);
+  const [selectedUserForInvestment, setSelectedUserForInvestment] = useState(null);
+
+  const handleBalanceUpdate = (updatedUser) => {
+    if (onUpdateUser) {
+      onUpdateUser(updatedUser);
+    }
+    setSelectedUserForBalance(null);
+  };
+
+  const handleInvestmentUpdate = (updatedData) => {
+    if (onUpdateUser) {
+      onUpdateUser(updatedData);
+    }
+    setSelectedUserForInvestment(null);
+  };
+
+  // Ensure users is always an array
+  const safeUsers = Array.isArray(users) ? users : [];
+
+  const getUserKycStatus = (user) => {
+    if (user?.kyc?.status) return user.kyc.status;
+    if (user?.kycStatus) return user.kycStatus;
+    return 'not_submitted';
+  };
+
+  // Apply filters and search
+  const filteredUsers = safeUsers.filter(user => {
+    const matchesSearch = 
+      user.email?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      user.name?.toLowerCase().includes(searchTerm.toLowerCase());
+    
+    const matchesTier = filters.tier === 'all' || user.tier === filters.tier;
+    const matchesKYC = filters.kycStatus === 'all' || getUserKycStatus(user) === filters.kycStatus;
+    const matchesActive = !filters.activeOnly || user.status === 'active';
+
+    return matchesSearch && matchesTier && matchesKYC && matchesActive;
+  });
+
+  // Sort users
+  const sortedUsers = [...filteredUsers].sort((a, b) => {
+    let comparison = 0;
+    switch (sortBy) {
+      case 'name':
+        comparison = a.name.localeCompare(b.name);
+        break;
+      case 'email':
+        comparison = a.email.localeCompare(b.email);
+        break;
+      case 'balance':
+        comparison = (a.balance || 0) - (b.balance || 0);
+        break;
+      default:
+        comparison = 0;
+    }
+    return sortOrder === 'asc' ? comparison : -comparison;
+  });
+
+  const handleSort = (field) => {
+    if (sortBy === field) {
+      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
+    } else {
+      setSortBy(field);
+      setSortOrder('asc');
+    }
+  };
+
+  // Remove duplicate users by id
+  const uniqueUsers = Array.from(new Map(sortedUsers.map(u => [u.id || u._id, u])).values());
+
+  const getTierColor = (tier) => {
+    switch (tier?.toLowerCase()) {
+      case 'diamond':
+        return 'bg-blue-500 bg-opacity-20 text-blue-400';
+      case 'gold':
+        return 'bg-yellow-500 bg-opacity-20 text-yellow-400';
+      case 'starter':
+        return 'bg-gray-500 bg-opacity-20 text-gray-400';
+      default:
+        return 'bg-gray-600 bg-opacity-20 text-gray-400';
+    }
+  };
+
+  const getKYCStatusColor = (status) => {
+    switch (status?.toLowerCase()) {
+      case 'verified':
+        return 'bg-green-500 bg-opacity-20 text-green-400';
+      case 'pending':
+        return 'bg-yellow-500 bg-opacity-20 text-yellow-400';
+      case 'rejected':
+        return 'bg-red-500 bg-opacity-20 text-red-400';
+      default:
+        return 'bg-gray-500 bg-opacity-20 text-gray-400';
+    }
+  };
+
+  return (
+    <div className="theme-aware-bg rounded-xl p-4 md:p-6 shadow-xl w-full min-w-0 overflow-hidden theme-aware-border">
+      <div className="w-full flex flex-col lg:flex-row justify-between items-start lg:items-center mb-6 gap-4 min-w-0">
+        {/* Search Bar */}
+        <div className="relative w-full lg:w-96 min-w-0">
+          <FiSearch className="absolute left-3 top-1/2 transform -translate-y-1/2 theme-aware-text-secondary" />
+          <input
+            type="text"
+            placeholder="Search by name, email or ID..."
+            className="w-full pl-10 pr-4 py-3 theme-aware-bg-secondary theme-aware-text rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all min-w-0 border theme-aware-border"
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+          />
+        </div>
+
+        {/* Action Buttons */}
+  <div className="flex flex-wrap items-center gap-3 justify-end w-full lg:w-auto">
+          <button
+            onClick={() => setShowFilters(!showFilters)}
+            className="flex items-center px-4 py-2 theme-aware-bg-secondary theme-aware-text rounded-lg theme-aware-hover-bg transition-all border theme-aware-border"
+          >
+            <FiFilter className="mr-2" />
+            <span>Filters</span>
+            <FiChevronDown className={`ml-2 transform transition-transform ${showFilters ? 'rotate-180' : ''}`} />
+          </button>
+
+          <div className="relative group">
+            <button className="flex items-center px-4 py-2 theme-aware-bg-secondary theme-aware-text rounded-lg theme-aware-hover-bg transition-all border theme-aware-border">
+              <FiDownload className="mr-2" />
+              <span>Export</span>
+              <FiChevronDown className="ml-2" />
+            </button>
+            <div className="absolute right-0 mt-2 w-48 theme-aware-bg-secondary rounded-lg shadow-xl hidden group-hover:block z-10 border theme-aware-border">
+              <button className="w-full text-left px-4 py-2 theme-aware-text theme-aware-hover-bg transition-all">Export as CSV</button>
+              <button className="w-full text-left px-4 py-2 theme-aware-text theme-aware-hover-bg transition-all">Export as PDF</button>
+              <button className="w-full text-left px-4 py-2 theme-aware-text theme-aware-hover-bg transition-all">Export as Excel</button>
+            </div>
+          </div>
+
+          <button className="flex items-center px-4 py-2 theme-aware-bg-secondary theme-aware-text rounded-lg theme-aware-hover-bg transition-all border theme-aware-border">
+            <FiSliders className="mr-2" />
+            <span>Columns</span>
+          </button>
+        </div>
+      </div>
+
+      {/* Filters Panel */}
+      {showFilters && (
+        <div className="mb-6 p-4 theme-aware-bg-secondary rounded-lg grid grid-cols-1 md:grid-cols-3 gap-4 border theme-aware-border">
+          <div>
+            <label className="block text-sm font-medium mb-2 theme-aware-text">Tier</label>
+            <select
+              value={filters.tier}
+              onChange={(e) => setFilters({ ...filters, tier: e.target.value })}
+              className="w-full theme-aware-bg-primary theme-aware-text rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 border theme-aware-border"
+            >
+              <option value="all">All Tiers</option>
+              <option value="diamond">Diamond</option>
+              <option value="gold">Gold</option>
+              <option value="starter">Starter</option>
+            </select>
+          </div>
+          <div>
+            <label className="block text-sm font-medium mb-2 theme-aware-text">KYC Status</label>
+            <select
+              value={filters.kycStatus}
+              onChange={(e) => setFilters({ ...filters, kycStatus: e.target.value })}
+              className="w-full theme-aware-bg-primary theme-aware-text rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500 border theme-aware-border"
+            >
+              <option value="all">All Statuses</option>
+              <option value="verified">Verified</option>
+              <option value="pending">Pending</option>
+              <option value="rejected">Rejected</option>
+            </select>
+          </div>
+          <div className="flex items-center">
+            <label className="flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={filters.activeOnly}
+                onChange={(e) => setFilters({ ...filters, activeOnly: e.target.checked })}
+                className="form-checkbox h-5 w-5 text-blue-500 rounded focus:ring-blue-500 border theme-aware-border theme-aware-bg-primary"
+              />
+              <span className="ml-2 theme-aware-text">Active Users Only</span>
+            </label>
+          </div>
+        </div>
+      )}
+
+      {/* Table */}
+      {/* Desktop/table view (hidden on small screens) */}
+      <div className="hidden md:block overflow-x-auto rounded-lg border theme-aware-border theme-aware-bg-tertiary min-w-0">
+        <table className="w-full table-auto min-w-full whitespace-normal">
+          <thead>
+            <tr className="border-b theme-aware-border-secondary theme-aware-bg-secondary text-left">
+              <th className="py-4 px-4 min-w-0 cursor-pointer theme-aware-text font-semibold" onClick={() => handleSort('name')}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span>User</span>
+                  {sortBy === 'name' && (
+                    <FiChevronDown className={`ml-1 transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
+                  )}
+                </div>
+              </th>
+              <th className="py-4 px-4 min-w-0 cursor-pointer theme-aware-text font-semibold" onClick={() => handleSort('email')}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span>Email</span>
+                  {sortBy === 'email' && (
+                    <FiChevronDown className={`ml-1 transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
+                  )}
+                </div>
+              </th>
+              <th className="py-4 px-4 min-w-0 theme-aware-text font-semibold">Tier</th>
+              <th className="py-4 px-4 min-w-0 theme-aware-text font-semibold">KYC Status</th>
+              <th className="py-4 px-4 min-w-0 cursor-pointer theme-aware-text font-semibold" onClick={() => handleSort('balance')}>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span>Balance</span>
+                  {sortBy === 'balance' && (
+                    <FiChevronDown className={`ml-1 transform ${sortOrder === 'desc' ? 'rotate-180' : ''}`} />
+                  )}
+                </div>
+              </th>
+              <th className="py-4 px-4 min-w-0 theme-aware-text font-semibold">Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            {uniqueUsers.map(user => {
+              const kycStatus = getUserKycStatus(user);
+
+              return (
+                <tr key={user.id || user._id} className="border-b theme-aware-border-secondary theme-aware-hover-bg transition-colors theme-aware-text">
+                  <td className="py-4 px-4 min-w-0">
+                    <div className="flex items-center min-w-0 gap-3">
+                      <div className="w-10 h-10 rounded-full theme-aware-bg-secondary flex items-center justify-center flex-shrink-0 theme-aware-text-secondary font-semibold">
+                        {user.avatar ? (
+                          <img src={user.avatar} alt={user.name} className="w-10 h-10 rounded-full object-cover" />
+                        ) : (
+                          <FiUser className="w-5 h-5" />
+                        )}
+                      </div>
+                      <div className="min-w-0 overflow-hidden">
+                        <div className="font-medium truncate theme-aware-text">{user.name || 'No name'}</div>
+                        <div className="text-xs theme-aware-text-secondary truncate">ID: {user.id || user._id}</div>
+                      </div>
+                    </div>
+                  </td>
+                  <td className="py-4 px-4 min-w-0 break-words max-w-[16rem] theme-aware-text-secondary">{user.email || 'N/A'}</td>
+                  <td className="py-4 px-4 min-w-0">
+                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${getTierColor(user.tier)}`}>
+                      {user.tier || 'Unknown'}
+                    </span>
+                  </td>
+                  <td className="py-4 px-4 min-w-0">
+                    <span className={`px-3 py-1 rounded-full text-xs font-medium ${getKYCStatusColor(kycStatus)}`}>
+                      {kycStatus || 'Not Submitted'}
+                    </span>
+                  </td>
+                  <td className="py-4 px-4 min-w-0 font-mono theme-aware-text">{typeof user.balance === 'number' ? `$${user.balance.toLocaleString()}` : 'N/A'}</td>
+                <td className="py-4 px-4 min-w-0">
+                  <div className="flex flex-wrap gap-2">
+                    <button 
+                      onClick={() => onSelectUser(user)}
+                      className="p-2 theme-aware-bg-secondary theme-aware-text rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors border theme-aware-border"
+                      title="View Details"
+                    >
+                      <FiEye className="w-4 h-4" />
+                    </button>
+                    <button 
+                      className="p-2 theme-aware-bg-secondary theme-aware-text rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors border theme-aware-border"
+                      title="Edit User"
+                    >
+                      <FiEdit2 className="w-4 h-4" />
+                    </button>
+                    <button 
+                      onClick={() => setSelectedUserForBalance(user)}
+                      className="p-2 theme-aware-bg-secondary theme-aware-text rounded-lg hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors border theme-aware-border"
+                      title="Manage Balance"
+                    >
+                      <FiDollarSign className="w-4 h-4" />
+                    </button>
+                    <button 
+                      onClick={() => setSelectedUserForInvestment(user)}
+                      className="p-2 theme-aware-bg-secondary theme-aware-text rounded-lg hover:bg-yellow-100 dark:hover:bg-yellow-900/50 transition-colors border theme-aware-border"
+                      title="Manage Investment"
+                    >
+                      <FiTrendingUp className="w-4 h-4" />
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+ 
+      {/* Mobile card view */}
+      <div className="block md:hidden space-y-3">
+        {uniqueUsers.map(user => {
+          const kycStatus = getUserKycStatus(user);
+
+          return (
+            <div key={user.id || user._id} className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 border border-gray-300 dark:border-gray-600">
+              <div className="flex flex-col sm:flex-row justify-between gap-3">
+                <div className="min-w-0">
+                  <div className="font-semibold text-gray-900 dark:text-white truncate">{user.name || 'No name'}</div>
+                  <div className="text-xs text-gray-600 dark:text-gray-400 break-words truncate">{user.email || 'N/A'}</div>
+                  <div className="text-xs text-gray-600 dark:text-gray-400 mt-1">ID: {user.id || user._id}</div>
+                </div>
+                <div className="flex flex-col items-start sm:items-end text-right gap-2">
+                  <div className="font-mono text-sm text-gray-900 dark:text-gray-100">{typeof user.balance === 'number' ? `$${user.balance.toLocaleString()}` : 'N/A'}</div>
+                  <div className={`px-2 py-0.5 rounded-full text-xs font-medium ${getTierColor(user.tier)}`}>{user.tier || 'Unknown'}</div>
+                  <div className={`px-2 py-0.5 rounded-full text-xs font-medium ${getKYCStatusColor(kycStatus)}`}>{kycStatus || 'Not Submitted'}</div>
+                </div>
+              </div>
+   
+              <div className="mt-4 grid gap-2 sm:grid-cols-2">
+                <div className="rounded-lg bg-gray-200 dark:bg-gray-600 p-3">
+                  <div className="text-gray-600 dark:text-gray-400 text-xs">Email</div>
+                  <div className="text-sm text-gray-900 dark:text-white break-words">{user.email || 'N/A'}</div>
+                </div>
+                <div className="rounded-lg bg-gray-200 dark:bg-gray-600 p-3">
+                  <div className="text-gray-600 dark:text-gray-400 text-xs">Tier</div>
+                  <div className="text-sm text-gray-900 dark:text-white break-words">{user.tier || 'Unknown'}</div>
+                </div>
+                <div className="rounded-lg bg-gray-200 dark:bg-gray-600 p-3">
+                  <div className="text-gray-600 dark:text-gray-400 text-xs">KYC Status</div>
+                  <div className="text-sm text-gray-900 dark:text-white break-words">{kycStatus || 'Not Submitted'}</div>
+                </div>
+                <div className="rounded-lg bg-gray-200 dark:bg-gray-600 p-3">
+                  <div className="text-gray-600 dark:text-gray-400 text-xs">Balance</div>
+                  <div className="text-sm text-gray-900 dark:text-white break-words">{typeof user.balance === 'number' ? `$${user.balance.toLocaleString()}` : 'N/A'}</div>
+                </div>
+              </div>
+   
+              <div className="mt-4 grid grid-cols-2 gap-2">
+                <button onClick={() => onSelectUser(user)} className="w-full p-2 bg-gray-100 dark:bg-gray-600 text-gray-900 dark:text-white rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors border border-gray-300 dark:border-gray-500">View</button>
+                <button className="w-full p-2 bg-gray-100 dark:bg-gray-600 text-gray-900 dark:text-white rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition-colors border border-gray-300 dark:border-gray-500">Edit</button>
+                <button onClick={() => setSelectedUserForBalance(user)} className="w-full p-2 bg-gray-100 dark:bg-gray-600 text-gray-900 dark:text-white rounded-lg hover:bg-green-100 dark:hover:bg-green-900/50 transition-colors border border-gray-300 dark:border-gray-500">Balance</button>
+                <button onClick={() => setSelectedUserForInvestment(user)} className="w-full p-2 bg-gray-100 dark:bg-gray-600 text-gray-900 dark:text-white rounded-lg hover:bg-yellow-100 dark:hover:bg-yellow-900/50 transition-colors border border-gray-300 dark:border-gray-500">Invest</button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Balance Management Modal */}
+      {selectedUserForBalance && (
+        <div className="fixed inset-0 flex items-center justify-center p-4 z-50 theme-overlay">
+          <BalanceManagementModal
+            user={selectedUserForBalance}
+            onClose={() => setSelectedUserForBalance(null)}
+            onUpdate={handleBalanceUpdate}
+          />
+        </div>
+      )}
+
+      {/* Investment Management Modal */}
+      {selectedUserForInvestment && (
+        <div className="fixed inset-0 flex items-center justify-center p-4 z-50 theme-overlay">
+          <InvestmentGainLossModal
+            user={selectedUserForInvestment}
+            onClose={() => setSelectedUserForInvestment(null)}
+            onUpdate={handleInvestmentUpdate}
+          />
+        </div>
+      )}
+
+      {/* Table Footer */}
+      <div className="mt-4 flex flex-wrap justify-between items-center text-sm text-gray-400 gap-2">
+        <div className="min-w-0 truncate">
+          Showing {uniqueUsers.length} of {safeUsers.length} users
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button className="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-all">Previous</button>
+          <button className="px-3 py-1 bg-blue-500 rounded">1</button>
+          <button className="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-all">2</button>
+          <button className="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-all">3</button>
+          <button className="px-3 py-1 bg-gray-700 rounded hover:bg-gray-600 transition-all">Next</button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+export default EnhancedUserTable;
+
+

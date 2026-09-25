@@ -1,0 +1,68 @@
+// src/components/WithdrawalHistory.js
+import React from 'react';
+import { FiCheck, FiClock, FiX, FiDollarSign, FiArrowRight, FiAlertTriangle } from 'react-icons/fi';
+
+const statusInfo = {
+  pending: { label: 'Pending', color: 'text-yellow-500', icon: <FiClock /> },
+  awaiting_activation_fee: { label: 'Awaiting Activation Fee', color: 'text-yellow-500', icon: <FiClock /> },
+  activation_fee_paid: { label: 'Activation Fee Paid', color: 'text-yellow-500', icon: <FiClock /> },
+  activation_fee_rejected: { label: 'Activation Fee Rejected', color: 'text-red-500', icon: <FiX /> },
+  activation_fee_approved: { label: 'Activation Fee Approved', color: 'text-green-500', icon: <FiCheck /> },
+  awaiting_interest_tax: { label: 'Awaiting Interest Tax', color: 'text-yellow-500', icon: <FiClock /> },
+  interest_tax_paid: { label: 'Interest Tax Paid', color: 'text-yellow-500', icon: <FiClock /> },
+  interest_tax_rejected: { label: 'Interest Tax Rejected', color: 'text-red-500', icon: <FiX /> },
+  withdrawal_processing: { label: 'Processing', color: 'text-yellow-500', icon: <FiClock /> },
+  awaiting_network_fee: { label: 'Awaiting Network Fee', color: 'text-yellow-500', icon: <FiClock /> },
+  network_fee_paid: { label: 'Network Fee Paid', color: 'text-yellow-500', icon: <FiClock /> },
+  withdrawal_successful: { label: 'Successful', color: 'text-green-500', icon: <FiCheck /> },
+  completed: { label: 'Completed', color: 'text-green-500', icon: <FiCheck /> },
+  rejected: { label: 'Rejected', color: 'text-red-500', icon: <FiX /> },
+  failed: { label: 'Failed', color: 'text-red-500', icon: <FiAlertTriangle /> },
+};
+
+const WithdrawalHistory = ({ withdrawals }) => {
+  const list = Array.isArray(withdrawals) ? withdrawals : [];
+
+  return (
+    <div className="glassmorphic p-6 rounded-xl">
+      <h3 className="text-xl font-bold mb-4 theme-aware-text">Recent Withdrawals</h3>
+      {list.length === 0 ? (
+        <p className="theme-aware-text-secondary">No withdrawal history</p>
+      ) : (
+        <div className="space-y-4">
+          {list.map((withdrawal) => {
+            const rawStatusKey = withdrawal.status || 'pending';
+            const effectiveStatusKey = (Number(withdrawal.activationFeeAmount ?? 0) <= 0 || Boolean(withdrawal.lockedBalanceSource)) && ['awaiting_activation_fee', 'activation_fee_paid', 'activation_fee_rejected'].includes(rawStatusKey)
+              ? 'activation_fee_approved'
+              : rawStatusKey;
+            const status = statusInfo[effectiveStatusKey] || { label: effectiveStatusKey, color: 'text-yellow-500', icon: <FiClock /> };
+            return (
+              <div key={withdrawal.id || withdrawal._id || Math.random()} className="flex flex-col sm:flex-row justify-between items-start sm:items-center p-4 border theme-aware-border rounded-xl theme-aware-bg-secondary">
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2 mb-1">
+                    <FiDollarSign className="text-gold" size={18} />
+                    <p className="font-semibold theme-aware-text">${Math.abs(withdrawal.amount || 0).toFixed(2)}</p>
+                  </div>
+                  <p className={`text-sm ${withdrawal.type === 'roi' ? 'text-purple-400 font-semibold' : 'theme-aware-text-secondary'}`}>
+                    {withdrawal.type === 'roi' ? 'ROI Withdrawal' : `Withdrawal to ${withdrawal.walletAddress || 'your wallet'}`}
+                  </p>
+                  <p className="text-xs theme-aware-text-muted mt-1">
+                    {((withdrawal.network && withdrawal.network !== '') || (withdrawal.currency && withdrawal.currency !== '')) ? (withdrawal.network || withdrawal.currency) : 'Network not selected'} • {withdrawal.createdAt ? new Date(withdrawal.createdAt).toLocaleDateString() : ''}
+                  </p>
+                </div>
+                <div className="mt-4 sm:mt-0 flex items-center gap-2">
+                  <span className={`${status.color} text-lg`}>
+                    {status.icon}
+                  </span>
+                  <span className={`text-sm font-semibold ${status.color}`}>{status.label}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default WithdrawalHistory;
